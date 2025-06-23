@@ -1,0 +1,20 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "de.saschat.tfcc.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "refmap": "terrafirmacheats.refmap.json",
+  "mixins": [
+    "ForgeRuleAccessor",
+    "InventoryBlockEntityAccessor"
+  ],
+  "client": [
+    "AnvilScreenMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
+  }
+}
