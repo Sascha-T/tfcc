@@ -2,6 +2,8 @@ package de.saschat.tfcc.mixin;
 
 import de.saschat.tfcc.ForgeOrder;
 import de.saschat.tfcc.PreStep;
+import de.saschat.tfcc.TFCCMod;
+import de.saschat.tfcc.TFCForger;
 import it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntList;
@@ -20,9 +22,12 @@ import net.dries007.tfc.network.PacketHandler;
 import net.dries007.tfc.network.ScreenButtonPacket;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraftforge.network.PacketDistributor;
 import org.spongepowered.asm.mixin.Mixin;
@@ -34,12 +39,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.*;
 import java.util.concurrent.ArrayBlockingQueue;
+import net.minecraft.nbt.CompoundTag;
 
 @Mixin(AnvilScreen.class)
-public class AnvilScreenMixin extends BlockEntityScreen<AnvilBlockEntity, AnvilContainer> {
+public class AnvilScreenMixin extends BlockEntityScreen<AnvilBlockEntity, AnvilContainer> implements TFCForger {
     public AnvilScreenMixin(AnvilContainer container, Inventory playerInventory, Component name, ResourceLocation texture) {
         super(container, playerInventory, name, texture);
     }
+
+
     @Unique private static PreStep[] OPTIMAL = new PreStep[300];
     static {
         Arrays.fill(OPTIMAL, null);
@@ -71,6 +79,27 @@ public class AnvilScreenMixin extends BlockEntityScreen<AnvilBlockEntity, AnvilC
         }
     }
 
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifier) {
+        if(keyCode == TFCCMod.FORGE_KEY.getKey().getValue() && canForge()) {
+            performSmithing();
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifier);
+    }
+
+    private boolean canForge() {
+        Forging mainInputForging = blockEntity.getMainInputForging();
+        AnvilBlockEntity.AnvilInventory inv = ((InventoryBlockEntityAccessor<AnvilBlockEntity.AnvilInventory>) blockEntity).getInventory();
+        if(mainInputForging != null && !inv.getItem().is(Items.AIR)) {
+            AnvilRecipe recipe = mainInputForging.getRecipe(blockEntity.getLevel());
+            IHeat heat = HeatCapability.get(inv.getItem());
+            if(heat != null && heat.canWork() && recipe != null) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /**
      * Adapted from {@link ForgeRule}
@@ -118,12 +147,9 @@ public class AnvilScreenMixin extends BlockEntityScreen<AnvilBlockEntity, AnvilC
     }
 
     @Unique
-    private Button button = new Button.Builder(Component.literal("Do"), this::perform)
-            .pos(16, 22)
-            .size(22, 20)
-            .build();
+    private Button button;
 
-    private void perform(Button button) {
+    public void performSmithing() {
         Forging mainInputForging = blockEntity.getMainInputForging();
 
         int source = mainInputForging.getWork();
@@ -149,26 +175,43 @@ public class AnvilScreenMixin extends BlockEntityScreen<AnvilBlockEntity, AnvilC
         }
     }
 
-    @Inject(at = @At("HEAD"), method = "init")
+
+
+    @Inject(at = @At("RETURN"), method = "init")
     public void init(CallbackInfo ci) {
+        button  = new Button.Builder(Component.literal("Do"), (b) -> performSmithing())
+                .pos(getGuiLeft() + 8, getGuiTop() + 14)
+                .size(22, 20)
+                .build();
         addRenderableWidget(button);
+
     }
 
     //  PacketDistributor.sendToServer(new ScreenButtonPacket(step.ordinal()));
 
+    private Item previousItem;
+
     @Inject(at = @At("HEAD"), method = "renderBg")
     public void gg(GuiGraphics graphics, float partialTicks, int mouseX, int mouseY, CallbackInfo ci) {
-        Forging mainInputForging = blockEntity.getMainInputForging();
+        button.active = canForge();
 
         AnvilBlockEntity.AnvilInventory inv = ((InventoryBlockEntityAccessor<AnvilBlockEntity.AnvilInventory>) blockEntity).getInventory();
-        boolean exists = false;
-        if(mainInputForging != null && !inv.getItem().is(Items.AIR)) {
-            AnvilRecipe recipe = mainInputForging.getRecipe(blockEntity.getLevel());
-            IHeat heat = HeatCapability.get(inv.getItem());
-            if(heat != null && heat.canWork() && recipe != null) {
-                exists = true;
+        try {
+            if(previousItem != null && !inv.getItem().is(previousItem)) {
+                if(TFCCMod.LAST_RECIPE != null) {
+                    ItemStack stack = TFCCMod.LAST_RECIPE.getInput().getItems()[0];
+                    if(stack.is(inv.getItem().getItem())) {
+                        PacketHandler.send(PacketDistributor.SERVER.noArg(), new ScreenButtonPacket(8, null));
+                        CompoundTag tag = new CompoundTag();
+                        tag.putString("recipe", TFCCMod.LAST_RECIPE.getId().toString());
+                        PacketHandler.send(PacketDistributor.SERVER.noArg(), new ScreenButtonPacket(0, tag));
+                    }
+                }
             }
+        } catch (Exception e) {
+            e.printStackTrace();
+            TFCCMod.LAST_RECIPE = null;
         }
-        button.active = exists;
+        previousItem = inv.getItem().getItem();
     }
 }
